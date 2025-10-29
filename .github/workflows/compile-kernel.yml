@@ -38,6 +38,15 @@ jobs:
             echo "Clang already exists, skipping clone."
           fi
 
+      - name: Setup SukiSU
+        run: |
+          if [ ! -d "KernelSU" ]; then
+            echo "Setting up sukisu..."
+            curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
+          else
+            echo "Skipping..."
+          fi
+
       - name: Build Kernel
         id: build_kernel
         run: |
@@ -47,7 +56,7 @@ jobs:
 
           mkdir -p out
           make O=out ARCH=${ARCH} RM6785_defconfig
-          
+
           PATH="${PWD}/clang/bin:${PATH}" \
           make -j$(nproc) O=out \
                 CC="clang" \
@@ -103,7 +112,7 @@ jobs:
         run: |
           duration_min=$((BUILD_DURATION / 60))
           job_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          
+
           NL=$'\n'
           message="✅ *Kernel Build Successful!*${NL}${NL}*Device:* RM6785${NL}*Duration:* ${duration_min} min${NL}*Zip Size:* ${ZIP_SIZE}${NL}*Used Space:* ${USED_SPACE} / ${TOTAL_SPACE}${NL}*Memory Used:* ${MEM_USED}${NL}${NL}_Job:_ [View Logs](${job_url})"
 
@@ -117,7 +126,7 @@ jobs:
         if: failure()
         run: |
           job_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          
+
           NL=$'\n'
           message="❌ *Kernel Build Failed!*${NL}${NL}*Repo:* ${{ github.repository }}${NL}*Branch:* ${{ github.ref_name }}${NL}${NL}_Job:_ [View Logs](${job_url})"
 
