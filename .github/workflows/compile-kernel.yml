@@ -11,11 +11,11 @@ jobs:
       ARCH: arm64
       LC_ALL: C
       USE_CCACHE: 1
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      # TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      # TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       CLANG_REPO: "https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r547379.git"
-      ANYKERNEL_REPO: "https://github.com/elohim-etz/AK3.git"
-      ANYKERNEL_BRANCH: "mikuchan"
+      ANYKERNEL_REPO: "https://github.com/Lastpickle/AK3.git"
+      ANYKERNEL_BRANCH: "takoyaki"
 
     steps:
       - name: Checkout Repository
@@ -42,14 +42,26 @@ jobs:
         run: |
           if [ ! -d "KernelSU" ]; then
             echo "Setting up sukisu..."
-            curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
+            curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s nongki
           else
             echo "Skipping..."
           fi
 
+      - name: Patch SusFS
+        run: |
+          # Apply New SusFS KSUN Patch
+          cd KernelSU
+          curl -Ls https://github.com/sidex15/KernelSU-Next/commit/80a1b5622c84a0385e63db4d53a3f5c3b56a007e.patch | patch -p1 -F 3
+          curl -Ls https://github.com/sidex15/KernelSU-Next/commit/effdc4fc06820afde70dd1b5e94658304efdb2ab.patch | patch -p1 -F 3
+          curl -Ls https://raw.githubusercontent.com/WildKernels/kernel_patches/refs/heads/main/next/susfs_fix_patches/v1.5.9/fix_apk_sign.c.patch | sed '3,11d' | patch -p1 -F 3
+          curl -Ls https://raw.githubusercontent.com/WildKernels/kernel_patches/refs/heads/main/next/susfs_fix_patches/v1.5.9/fix_kernel_compat.c.patch | patch -p1 -F 3
+
+
       - name: Build Kernel
         id: build_kernel
         run: |
+          export KBUILD_BUILD_USER="Attack_Helicopter"
+          export KBUILD_BUILD_HOST="BystanderforU" 
           set -e
           echo "Starting kernel build..."
           start_time=$(date +%s)
@@ -106,31 +118,3 @@ jobs:
           echo "AVAILABLE_SPACE=$available_space" >> $GITHUB_ENV
           echo "MEM_USED=$mem_used" >> $GITHUB_ENV
           echo "ZIP_SIZE=$zip_size" >> $GITHUB_ENV
-
-      - name: Send Success Report to Telegram
-        if: success()
-        run: |
-          duration_min=$((BUILD_DURATION / 60))
-          job_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-
-          NL=$'\n'
-          message="✅ *Kernel Build Successful!*${NL}${NL}*Device:* RM6785${NL}*Duration:* ${duration_min} min${NL}*Zip Size:* ${ZIP_SIZE}${NL}*Used Space:* ${USED_SPACE} / ${TOTAL_SPACE}${NL}*Memory Used:* ${MEM_USED}${NL}${NL}_Job:_ [View Logs](${job_url})"
-
-          curl -s -F chat_id="${TELEGRAM_CHAT_ID}" \
-               -F parse_mode="Markdown" \
-               -F caption="$message" \
-               -F document=@"$KERNEL_ZIP" \
-               "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument"
-
-      - name: Send Failure Report to Telegram
-        if: failure()
-        run: |
-          job_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-
-          NL=$'\n'
-          message="❌ *Kernel Build Failed!*${NL}${NL}*Repo:* ${{ github.repository }}${NL}*Branch:* ${{ github.ref_name }}${NL}${NL}_Job:_ [View Logs](${job_url})"
-
-          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-               -d chat_id="${TELEGRAM_CHAT_ID}" \
-               -d parse_mode="Markdown" \
-               -d text="$message"
