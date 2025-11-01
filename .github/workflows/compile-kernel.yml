@@ -50,7 +50,7 @@ jobs:
       - name: Patch SusFS
         run: |
           # Apply New SusFS KSUN Patch
-          cd KernelSU
+          cd KernelSU-Next
           curl -Ls https://github.com/sidex15/KernelSU-Next/commit/80a1b5622c84a0385e63db4d53a3f5c3b56a007e.patch | patch -p1 -F 3
           curl -Ls https://github.com/sidex15/KernelSU-Next/commit/effdc4fc06820afde70dd1b5e94658304efdb2ab.patch | patch -p1 -F 3
           curl -Ls https://raw.githubusercontent.com/WildKernels/kernel_patches/refs/heads/main/next/susfs_fix_patches/v1.5.9/fix_apk_sign.c.patch | sed '3,11d' | patch -p1 -F 3
