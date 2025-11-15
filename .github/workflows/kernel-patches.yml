@@ -1,0 +1,385 @@
+name: Apply Kernel Patches
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: 'Target branch to apply patches to'
+        required: true
+        default: 'bka'
+      source_repo:
+        description: 'Source repository URL (e.g., https://github.com/user/repo)'
+        required: true
+      commit_hashes:
+        description: 'Commit hashes to apply as patches (comma or space separated)'
+        required: true
+      dry_run:
+        description: 'Dry run (no actual changes)'
+        required: true
+        type: boolean
+        default: true
+      fuzz_factor:
+        description: 'Patch fuzz factor (0-3, higher = more tolerant)'
+        required: true
+        type: choice
+        options:
+          - '0'
+          - '1'
+          - '2'
+          - '3'
+        default: '3'
+      reject_strategy:
+        description: 'What to do with rejected hunks'
+        required: true
+        type: choice
+        options:
+          - 'stop-on-reject'
+          - 'continue-with-rejects'
+          - 'skip-failed-patches'
+        default: 'stop-on-reject'
+
+jobs:
+  apply-patches:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      
+      - name: Checkout target branch
+        run: |
+          git checkout ${{ github.event.inputs.target_branch }}
+      
+      - name: Parse commit hashes and download patches
+        id: download_patches
+        run: |
+          # Parse comma or space separated commits
+          COMMITS="${{ github.event.inputs.commit_hashes }}"
+          COMMITS=$(echo "$COMMITS" | tr ',' ' ' | tr -s ' ')
+          
+          # Clean repo URL (remove .git suffix if present)
+          REPO_URL="${{ github.event.inputs.source_repo }}"
+          REPO_URL="${REPO_URL%.git}"
+          
+          echo "Source repository: $REPO_URL"
+          echo "Commits to process: $COMMITS"
+          echo ""
+          
+          mkdir -p /tmp/patches
+          COUNTER=1
+          SUCCESS=0
+          FAILED=0
+          
+          for commit in $COMMITS; do
+            echo "[$COUNTER] Downloading patch for commit: $commit"
+            PATCH_URL="${REPO_URL}/commit/${commit}.patch"
+            PATCH_FILE="/tmp/patches/${COUNTER}_${commit}.patch"
+            
+            if curl -f -L -s "$PATCH_URL" -o "$PATCH_FILE"; then
+              echo "✓ Downloaded: $PATCH_URL"
+              
+              # Show patch info
+              echo "Patch subject:"
+              head -n 20 "$PATCH_FILE" | grep -E "^(Subject|From|Date):" || true
+              
+              SUCCESS=$((SUCCESS + 1))
+            else
+              echo "✗ Failed to download: $PATCH_URL"
+              FAILED=$((FAILED + 1))
+            fi
+            
+            echo ""
+            COUNTER=$((COUNTER + 1))
+          done
+          
+          echo "download_success=$SUCCESS" >> $GITHUB_OUTPUT
+          echo "download_failed=$FAILED" >> $GITHUB_OUTPUT
+          echo "::notice::Downloaded $SUCCESS patches, $FAILED failed"
+          
+          if [ $SUCCESS -eq 0 ]; then
+            echo "::error::No patches downloaded successfully"
+            exit 1
+          fi
+      
+      - name: Dry run - Test patch application
+        if: github.event.inputs.dry_run == 'true'
+        run: |
+          echo "=========================================="
+          echo "DRY RUN MODE - No changes will be committed"
+          echo "=========================================="
+          echo "Target branch: ${{ github.event.inputs.target_branch }}"
+          echo "Fuzz factor: ${{ github.event.inputs.fuzz_factor }}"
+          echo "Patches to apply: ${{ steps.download_patches.outputs.download_success }}"
+          echo "=========================================="
+          echo ""
+          
+          SUCCESS=0
+          PARTIAL=0
+          FAILED=0
+          
+          # Create temp directory for reject files
+          mkdir -p /tmp/rejects
+          
+          for patch_file in /tmp/patches/*.patch; do
+            [ -f "$patch_file" ] || continue
+            
+            PATCH_NAME=$(basename "$patch_file")
+            echo "----------------------------------------"
+            echo "Testing: $PATCH_NAME"
+            echo ""
+            
+            # Try to apply patch with dry-run
+            # Options:
+            # --dry-run: Don't actually apply
+            # -p1: Strip one level of path
+            # -F: Fuzz factor
+            # -l: Ignore whitespace changes
+            # --no-backup-if-mismatch: Don't create .orig files
+            # --reject-file: Save rejects to temp location (not in source tree)
+            REJECT_FILE="/tmp/rejects/${PATCH_NAME}.rej"
+            
+            if patch --dry-run -p1 -F ${{ github.event.inputs.fuzz_factor }} -l --no-backup-if-mismatch --reject-file="$REJECT_FILE" < "$patch_file" 2>&1 | tee /tmp/patch_output.txt; then
+              echo "✓ Would apply cleanly"
+              
+              # Show what would change
+              echo ""
+              echo "Files that would be modified:"
+              grep -E "^patching file" /tmp/patch_output.txt | sed 's/patching file /  - /'
+              
+              SUCCESS=$((SUCCESS + 1))
+            else
+              # Check if reject file was created
+              if [ -f "$REJECT_FILE" ]; then
+                echo "⚠ Would apply partially (some hunks would fail)"
+                echo ""
+                echo "Rejected hunks for $PATCH_NAME:"
+                echo "-----------------------------------"
+                cat "$REJECT_FILE"
+                echo "-----------------------------------"
+                
+                PARTIAL=$((PARTIAL + 1))
+              else
+                echo "✗ Would fail completely"
+                FAILED=$((FAILED + 1))
+              fi
+              
+              # Show failed hunks from output
+              if grep -q "Hunk.*FAILED" /tmp/patch_output.txt; then
+                echo ""
+                echo "Failed hunks summary:"
+                grep -E "Hunk.*FAILED" /tmp/patch_output.txt | sed 's/^/  /'
+              fi
+            fi
+            
+            echo ""
+          done
+          
+          echo "=========================================="
+          echo "Dry Run Summary:"
+          echo "  Clean patches: $SUCCESS"
+          echo "  Partial patches: $PARTIAL"
+          echo "  Failed patches: $FAILED"
+          echo "=========================================="
+          
+          if [ $PARTIAL -gt 0 ]; then
+            echo "::warning::$PARTIAL patches would apply partially"
+          fi
+          
+          if [ $FAILED -gt 0 ]; then
+            echo "::warning::$FAILED patches would fail completely"
+          fi
+      
+      - name: Apply patches
+        if: github.event.inputs.dry_run == 'false'
+        id: apply_patches
+        run: |
+          SUCCESS=0
+          PARTIAL=0
+          FAILED=0
+          FAILED_PATCHES=""
+          PARTIAL_PATCHES=""
+          
+          # Create temp directory for reject files (not in source tree)
+          mkdir -p /tmp/rejects
+          
+          for patch_file in /tmp/patches/*.patch; do
+            [ -f "$patch_file" ] || continue
+            
+            PATCH_NAME=$(basename "$patch_file")
+            echo "=========================================="
+            echo "Applying: $PATCH_NAME"
+            echo ""
+            
+            # Apply patch with maximum tolerance options:
+            # -p1: Strip one level of path
+            # -F: Fuzz factor (higher = more tolerant)
+            # -l: Ignore whitespace changes
+            # --ignore-whitespace: Ignore whitespace differences
+            # --no-backup-if-mismatch: Don't create .orig files
+            # --reject-file: Save rejects to temp location (NOT in source tree)
+            REJECT_FILE="/tmp/rejects/${PATCH_NAME}.rej"
+            
+            if patch -p1 -F ${{ github.event.inputs.fuzz_factor }} -l --ignore-whitespace --no-backup-if-mismatch --reject-file="$REJECT_FILE" < "$patch_file" 2>&1 | tee /tmp/patch_output.txt; then
+              echo "✓ Applied successfully"
+              SUCCESS=$((SUCCESS + 1))
+              
+              # Commit the changes
+              COMMIT_HASH=$(echo "$PATCH_NAME" | grep -oE '[a-f0-9]{7,}')
+              git add -A
+              git commit -m "Apply patch from commit $COMMIT_HASH" || true
+              
+            else
+              # Check if reject file was created
+              if [ -f "$REJECT_FILE" ]; then
+                echo "⚠ Applied partially (some hunks failed)"
+                echo ""
+                echo "Rejected hunks:"
+                echo "-----------------------------------"
+                cat "$REJECT_FILE"
+                echo "-----------------------------------"
+                
+                PARTIAL=$((PARTIAL + 1))
+                PARTIAL_PATCHES="$PARTIAL_PATCHES$PATCH_NAME "
+                
+                case "${{ github.event.inputs.reject_strategy }}" in
+                  "continue-with-rejects")
+                    echo "→ Continuing (reject file saved to /tmp/rejects/)"
+                    git add -A
+                    git commit -m "Partial patch from $PATCH_NAME (see workflow logs for rejects)" || true
+                    ;;
+                  "skip-failed-patches")
+                    echo "⊘ Skipping this patch"
+                    git reset --hard HEAD
+                    ;;
+                  *)
+                    echo "::error::Patch failed, stopping"
+                    exit 1
+                    ;;
+                esac
+              else
+                echo "✗ Failed completely"
+                FAILED=$((FAILED + 1))
+                FAILED_PATCHES="$FAILED_PATCHES$PATCH_NAME "
+                
+                if [ "${{ github.event.inputs.reject_strategy }}" = "stop-on-reject" ]; then
+                  echo "::error::Patch failed, stopping"
+                  exit 1
+                else
+                  echo "⊘ Skipping this patch"
+                fi
+              fi
+            fi
+            
+            echo ""
+          done
+          
+          echo "success_count=$SUCCESS" >> $GITHUB_OUTPUT
+          echo "partial_count=$PARTIAL" >> $GITHUB_OUTPUT
+          echo "failed_count=$FAILED" >> $GITHUB_OUTPUT
+          echo "failed_patches=$FAILED_PATCHES" >> $GITHUB_OUTPUT
+          echo "partial_patches=$PARTIAL_PATCHES" >> $GITHUB_OUTPUT
+      
+      - name: Show reject files summary
+        if: github.event.inputs.dry_run == 'false'
+        run: |
+          echo "Checking for reject files in /tmp/rejects..."
+          if ls /tmp/rejects/*.rej 1> /dev/null 2>&1; then
+            echo "::warning::Reject files found (saved outside source tree):"
+            ls -lh /tmp/rejects/*.rej
+            
+            echo ""
+            echo "All reject files content:"
+            for rej_file in /tmp/rejects/*.rej; do
+              echo "========================================"
+              echo "File: $(basename $rej_file)"
+              echo "========================================"
+              cat "$rej_file"
+              echo ""
+            done
+          else
+            echo "✓ No reject files found - all patches applied cleanly"
+          fi
+          
+          # Verify no .rej or .orig files in source tree
+          echo ""
+          echo "Verifying source tree is clean..."
+          if find . -name "*.rej" -o -name "*.orig" | grep -q .; then
+            echo "::error::Found .rej or .orig files in source tree (this shouldn't happen):"
+            find . -name "*.rej" -o -name "*.orig"
+            exit 1
+          else
+            echo "✓ Source tree is clean (no .rej or .orig files)"
+          fi
+      
+      - name: Push changes
+        if: github.event.inputs.dry_run == 'false' && steps.apply_patches.outputs.success_count != '0'
+        run: |
+          if git diff --quiet origin/${{ github.event.inputs.target_branch }}; then
+            echo "::notice::No changes to push"
+          else
+            git push origin ${{ github.event.inputs.target_branch }}
+            echo "::notice::Successfully pushed changes"
+          fi
+      
+      - name: Final summary
+        if: github.event.inputs.dry_run == 'false'
+        run: |
+          echo "=========================================="
+          echo "Patch Application Complete!"
+          echo "=========================================="
+          echo "Successfully applied: ${{ steps.apply_patches.outputs.success_count }}"
+          echo "Partially applied: ${{ steps.apply_patches.outputs.partial_count }}"
+          echo "Failed: ${{ steps.apply_patches.outputs.failed_count }}"
+          echo "=========================================="
+          
+          if [ "${{ steps.apply_patches.outputs.partial_count }}" != "0" ]; then
+            echo ""
+            echo "Partially applied patches:"
+            echo "${{ steps.apply_patches.outputs.partial_patches }}" | tr ' ' '\n'
+          fi
+          
+          if [ "${{ steps.apply_patches.outputs.failed_count }}" != "0" ]; then
+            echo ""
+            echo "Failed patches:"
+            echo "${{ steps.apply_patches.outputs.failed_patches }}" | tr ' ' '\n'
+          fi
+      
+      - name: Create summary issue
+        if: github.event.inputs.dry_run == 'false' && (steps.apply_patches.outputs.partial_count != '0' || steps.apply_patches.outputs.failed_count != '0')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = `## Patch Application Summary
+            
+            **Source:** ${{ github.event.inputs.source_repo }}
+            **Target branch:** ${{ github.event.inputs.target_branch }}
+            **Fuzz factor:** ${{ github.event.inputs.fuzz_factor }}
+            **Reject strategy:** ${{ github.event.inputs.reject_strategy }}
+            
+            ### Results
+            - ✅ Successfully applied: ${{ steps.apply_patches.outputs.success_count }}
+            - ⚠️ Partially applied: ${{ steps.apply_patches.outputs.partial_count }}
+            - ❌ Failed: ${{ steps.apply_patches.outputs.failed_count }}
+            
+            ${steps.apply_patches.outputs.partial_count !== '0' ? `### Partially Applied Patches\n\`\`\`\n${{ steps.apply_patches.outputs.partial_patches }}\n\`\`\`` : ''}
+            
+            ${steps.apply_patches.outputs.failed_count !== '0' ? `### Failed Patches\n\`\`\`\n${{ steps.apply_patches.outputs.failed_patches }}\n\`\`\`` : ''}
+            
+            Reject files are saved in workflow logs under /tmp/rejects/ for manual review.
+            The source tree remains clean with no .rej or .orig files.`;
+            
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'Patch Application Summary: ' + new Date().toISOString().split('T')[0],
+              body: body,
+              labels: ['patch', 'kernel-update']
+            });
