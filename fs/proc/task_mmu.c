@@ -915,21 +915,7 @@ static int show_smap(struct seq_file *m, void *v)
 		seq_print_vma_name(m, vma);
 		seq_putc(m, '\n');
 	}
-	
-#ifdef CONFIG_KSU_SUSFS_SUS_MAP
-		if (vma->vm_file &&
-			unlikely(file_inode(vma->vm_file)->i_mapping->flags & BIT_SUS_MAPS) &&
-			susfs_is_current_proc_umounted())
-		{
-			seq_printf(m,
-				"Size:           %8lu kB\n"
-				"KernelPageSize: %8lu kB\n"
-				"MMUPageSize:    %8lu kB\n",
-				(vma->vm_end - vma->vm_start) >> 10,
-				4, 4);
-			goto bypass_orig_flow;
-		}
-#endif
+
 	seq_printf(m,
 		   "Size:           %8lu kB\n"
 		   "KernelPageSize: %8lu kB\n"
@@ -937,26 +923,12 @@ static int show_smap(struct seq_file *m, void *v)
 		   (vma->vm_end - vma->vm_start) >> 10,
 		   vma_kernel_pagesize(vma) >> 10,
 		   vma_mmu_pagesize(vma) >> 10);
-#ifdef CONFIG_KSU_SUSFS_SUS_MAP
-bypass_orig_flow:
-#endif
+
 	__show_smap(m, &mss);
-#ifdef CONFIG_KSU_SUSFS_SUS_MAP
-		if (vma->vm_file &&
-			unlikely(file_inode(vma->vm_file)->i_mapping->flags & BIT_SUS_MAPS) &&
-			susfs_is_current_proc_umounted())
-		{
-			seq_puts(m, "VmFlags: mr mw me");
-			seq_putc(m, '\n');
-			goto bypass_orig_flow2;
-		}
-#endif
 
 	arch_show_smap(m, vma);
 	show_smap_vma_flags(m, vma);
-#ifdef CONFIG_KSU_SUSFS_SUS_MAP
-bypass_orig_flow2:
-#endif
+
 	m_cache_vma(m, vma);
 
 	return 0;
