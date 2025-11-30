@@ -118,3 +118,10 @@ jobs:
           echo "AVAILABLE_SPACE=$available_space" >> $GITHUB_ENV
           echo "MEM_USED=$mem_used" >> $GITHUB_ENV
           echo "ZIP_SIZE=$zip_size" >> $GITHUB_ENV
+
+      - name: Upload Kernel Zip Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ZIP_NAME }}
+          path: ${{ env.KERNEL_ZIP }}
+          compression-level: 0
