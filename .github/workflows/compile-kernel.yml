@@ -41,8 +41,8 @@ jobs:
       - name: Setup SukiSU
         run: |
           if [ ! -d "KernelSU" ]; then
-            echo "Setting up ksuN..."
-            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
+            echo "Setting up ksu..."
+            curl -LSs "https://raw.githubusercontent.com/backslashxx/KernelSU/refs/heads/master/kernel/setup.sh" | bash -
           else
             echo "Skipping..."
           fi
@@ -50,11 +50,11 @@ jobs:
       - name: Patch SusFS
         run: |
           # Apply New SusFS KSUN Patch
-          cd KernelSU-Next
-          curl -Ls https://raw.githubusercontent.com/TheSillyOk/kernel_ls_patches/0b1717876eb05bbb06f02ed96deb3addda7d9b2a/KSUN/KSUN-SUSFS-1.5.9.patch | patch -p1 -F 3
-          curl -Ls https://github.com/sidex15/KernelSU-Next/commit/effdc4fc06820afde70dd1b5e94658304efdb2ab.patch | patch -p1 -F 3
-          curl -Ls https://raw.githubusercontent.com/WildKernels/kernel_patches/refs/heads/main/next/susfs_fix_patches/v1.5.9/fix_apk_sign.c.patch | sed '3,11d' | patch -p1 -F 3
-          curl -Ls https://raw.githubusercontent.com/WildKernels/kernel_patches/refs/heads/main/next/susfs_fix_patches/v1.5.9/fix_kernel_compat.c.patch | patch -p1 -F 3
+          # cd KernelSU-Next
+          # curl -Ls https://raw.githubusercontent.com/TheSillyOk/kernel_ls_patches/0b1717876eb05bbb06f02ed96deb3addda7d9b2a/KSUN/KSUN-SUSFS-1.5.9.patch | patch -p1 -F 3
+          # curl -Ls https://github.com/sidex15/KernelSU-Next/commit/effdc4fc06820afde70dd1b5e94658304efdb2ab.patch | patch -p1 -F 3
+          # curl -Ls https://raw.githubusercontent.com/WildKernels/kernel_patches/refs/heads/main/next/susfs_fix_patches/v1.5.9/fix_apk_sign.c.patch | sed '3,11d' | patch -p1 -F 3
+          # curl -Ls https://raw.githubusercontent.com/WildKernels/kernel_patches/refs/heads/main/next/susfs_fix_patches/v1.5.9/fix_kernel_compat.c.patch | patch -p1 -F 3
 
 
       - name: Build Kernel
